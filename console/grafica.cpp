@@ -994,15 +994,21 @@ static void paintRain(Graphics& g, const RectF& page) {
 
 static void paintHeat(Graphics& g, const RectF& page, bool controls) {
     FontFamily ff(L"Segoe UI");
-    std::wstring title = stationTitle() + (app.heatMode == HeatMode::Five ? L"Ondate di caldo, 5 giorni"
+    const bool cold = coldMode(app.heatMode);
+    std::wstring title = stationTitle() + (
+          app.heatMode == HeatMode::Five ? L"Ondate di caldo, 5 giorni"
         : app.heatMode == HeatMode::Ten ? L"Ondate di caldo, 10 giorni"
-        : L"Serie con Tmax oltre " + std::to_wstring(app.heatThreshold) + L" C");
+        : app.heatMode == HeatMode::Streak ? L"Serie con Tmax oltre " + std::to_wstring(app.heatThreshold) + L" C"
+        : app.heatMode == HeatMode::Cold5 ? L"Ondate di freddo, 5 giorni"
+        : app.heatMode == HeatMode::Cold10 ? L"Ondate di freddo, 10 giorni"
+        : L"Serie con Tmin sotto " + std::to_wstring(app.coldThreshold) + L" C");
     int fy, ly;
     dailyYears(fy, ly);
-    std::wstring sub = app.heatMode == HeatMode::Streak
-        ? L"Giorni consecutivi con Tmax sopra la soglia, ordinati per durata   |   dati " + std::to_wstring(fy) + L"-" + std::to_wstring(ly)
-        : L"Media della Tmedia sul periodo, giorni con Tmin, Tmedia e Tmax misurate, periodi non sovrapposti   |   dati "
-          + std::to_wstring(fy) + L"-" + std::to_wstring(ly);
+    std::wstring range = L"   |   dati " + std::to_wstring(fy) + L"-" + std::to_wstring(ly);
+    std::wstring sub = app.heatMode == HeatMode::Streak ? L"Giorni consecutivi con Tmax sopra la soglia, ordinati per durata" + range
+        : app.heatMode == HeatMode::ColdStreak ? L"Giorni consecutivi con Tmin sotto la soglia, ordinati per durata" + range
+        : std::wstring(cold ? L"Media della Tmedia piu bassa" : L"Media della Tmedia piu alta")
+          + L", giorni con Tmin, Tmedia e Tmax misurate, periodi non sovrapposti" + range;
     cardTitle(g, page, title, sub);
     drawLegend(g, page, L"Tmedia", L"Tmin - Tmax", L"Tmax");
     Font body(&ff, 15, FontStyleRegular, UnitPixel);
@@ -1010,25 +1016,31 @@ static void paintHeat(Graphics& g, const RectF& page, bool controls) {
     Font tick(&ff, 12, FontStyleRegular, UnitPixel);
     float top = page.Y + 70;
     if (controls) {
-        const wchar_t* labels[] = {L"5 giorni", L"10 giorni", L"Tmax oltre soglia"};
+        // Prima i tre pulsanti del caldo (400-402), poi quelli del freddo (405-407).
+        const wchar_t* labels[] = {L"Caldo 5 gg", L"Caldo 10 gg", L"Tmax oltre soglia", L"Freddo 5 gg", L"Freddo 10 gg", L"Tmin sotto soglia"};
+        const int ids[] = {400, 401, 402, 405, 406, 407};
+        const HeatMode modes[] = {HeatMode::Five, HeatMode::Ten, HeatMode::Streak, HeatMode::Cold5, HeatMode::Cold10, HeatMode::ColdStreak};
         float x = page.X + 18;
-        for (int i = 0; i < 3; ++i) {
-            float w = i == 2 ? 150.f : 96.f;
+        for (int i = 0; i < 6; ++i) {
+            if (i == 3) x += 14;
+            float w = (i == 2 || i == 5) ? 138.f : 92.f;
             RectF r(x, top, w, 28);
-            addHit(r, 400 + i);
-            bool on = (int)app.heatMode == i;
-            fillRound(g, r, on ? C(230, 242, 248) : C(16, 38, 60), kCardEdge());
-            text(g, labels[i], smallF, on ? C(24, 48, 66) : kTitle(), r, StringAlignmentCenter, StringAlignmentCenter);
+            addHit(r, ids[i]);
+            bool on = app.heatMode == modes[i];
+            Color edge = i < 3 ? kAmber() : kIce();
+            fillRound(g, r, on ? C(230, 242, 248) : C(16, 38, 60), on ? edge : kCardEdge());
+            text(g, labels[i], smallF, on ? C(24, 48, 66) : (i < 3 ? kAmber() : kIce()), r, StringAlignmentCenter, StringAlignmentCenter);
             x += w + 8;
         }
-        if (app.heatMode == HeatMode::Streak) {
+        if (streakMode(app.heatMode)) {
+            int thr = app.heatMode == HeatMode::Streak ? app.heatThreshold : app.coldThreshold;
             RectF minus(x + 6, top, 28, 28), plus(x + 92, top, 28, 28);
             addHit(minus, 403); addHit(plus, 404);
             fillRound(g, minus, C(16, 38, 60), kCardEdge());
             fillRound(g, plus, C(16, 38, 60), kCardEdge());
             text(g, L"-", body, kTitle(), minus, StringAlignmentCenter, StringAlignmentCenter);
             text(g, L"+", body, kTitle(), plus, StringAlignmentCenter, StringAlignmentCenter);
-            text(g, std::to_wstring(app.heatThreshold) + L" C", body, kGold(), RectF(x + 34, top, 58, 28), StringAlignmentCenter, StringAlignmentCenter);
+            text(g, std::to_wstring(thr) + L" C", body, cold ? kIce() : kGold(), RectF(x + 34, top, 58, 28), StringAlignmentCenter, StringAlignmentCenter);
         }
         top += 40;
     }
@@ -1048,7 +1060,8 @@ static void paintHeat(Graphics& g, const RectF& page, bool controls) {
     };
     float tableW = std::min(640.f, page.Width * 0.56f);
     float x0 = page.X + 18;
-    const wchar_t* heads[] = {L"#", L"Periodo", L"Giorni", L"Tmedia", L"Tmax media", L"Tmax max", L"Tmin media"};
+    // Nel freddo la colonna estrema e' la Tmin piu' bassa al posto della Tmax piu' alta.
+    const wchar_t* heads[] = {L"#", L"Periodo", L"Giorni", L"Tmedia", L"Tmax media", cold ? L"Tmin min" : L"Tmax max", L"Tmin media"};
     float cols[] = {0, 30, 222, 282, 352, 446, 528};
     float scaleX = tableW / 610.f;
     for (int i = 0; i < 7; ++i)
@@ -1068,7 +1081,7 @@ static void paintHeat(Graphics& g, const RectF& page, bool controls) {
         text(g, std::to_wstring(w.days), f, kTitle(), RectF(x0 + cols[2] * scaleX, y, 56 * scaleX, row.Height));
         text(g, plainNum(w.meanT, 1), f, kGold(), RectF(x0 + cols[3] * scaleX, y, 66 * scaleX, row.Height));
         text(g, plainNum(w.meanTx, 1), f, kAmber(), RectF(x0 + cols[4] * scaleX, y, 86 * scaleX, row.Height));
-        text(g, plainNum(w.maxTx, 1), f, kHotColor(), RectF(x0 + cols[5] * scaleX, y, 78 * scaleX, row.Height));
+        text(g, plainNum(cold ? w.minTn : w.maxTx, 1), f, cold ? C(170, 200, 255) : kHotColor(), RectF(x0 + cols[5] * scaleX, y, 78 * scaleX, row.Height));
         text(g, plainNum(w.meanTn, 1), f, kIce(), RectF(x0 + cols[6] * scaleX, y, 80 * scaleX, row.Height));
     }
     const auto& w = waves[sel];
@@ -1117,6 +1130,9 @@ static void paintHeat(Graphics& g, const RectF& page, bool controls) {
     }
     drawNote(g, page, app.heatMode == HeatMode::Streak
             ? L"Un giorno senza Tmax o con Tmax non oltre la soglia interrompe la serie. Clic su una riga per il dettaglio."
+            : app.heatMode == HeatMode::ColdStreak
+            ? L"Un giorno senza Tmin o con Tmin non sotto la soglia interrompe la serie. Clic su una riga per il dettaglio."
+            : cold ? L"Finestre complete, scelte dalla piu fredda senza sovrapposizioni. Clic su una riga per il dettaglio."
             : L"Finestre complete, scelte dalla piu calda senza sovrapposizioni. Clic su una riga per il dettaglio.");
     drawCredit(g, page);
 }
@@ -1231,6 +1247,171 @@ static void paintRank(Graphics& g, const RectF& page) {
     drawCredit(g, page);
 }
 
+// ------------------------------------------------------------ tabella dati
+
+static Color varColor(int v) {
+    if (v == VTN) return kIce();
+    if (v == VTM) return kGold();
+    if (v == VTX) return kAmber();
+    if (v == VP) return C(130, 200, 240);
+    return kTitle();
+}
+
+static void paintTable(Graphics& g, const RectF& page, bool controls) {
+    FontFamily ff(L"Segoe UI");
+    Font head(&ff, 12, FontStyleBold, UnitPixel);
+    Font body(&ff, 13, FontStyleRegular, UnitPixel);
+    Font bold(&ff, 13, FontStyleBold, UnitPixel);
+    Font btnF(&ff, 13, FontStyleBold, UnitPixel);
+    ensureTablePeriod();
+    auto sts = tableStations();
+    auto cols = tableColumns();
+    const long from = app.tableFrom, to = app.tableTo;
+    const long nDays = to - from + 1;
+    int fy, fm, fd, ty, tm, td;
+    civilFromDays(from, fy, fm, fd);
+    civilFromDays(to, ty, tm, td);
+    bool multi = sts.size() > 1;
+    std::wstring who = sts.empty() ? std::wstring(L"nessuna stazione")
+        : multi ? std::to_wstring(sts.size()) + L" stazioni, " + varName(app.tableVar)
+        : app.stations[sts[0]]->name;
+    cardTitle(g, page, L"Tabella dati - " + who,
+              L"Dal " + dateText(fy, fm, fd) + L" al " + dateText(ty, tm, td) + L"  (" + std::to_wstring(nDays) + L" giorni)"
+              + L"   |   rotella: scorre le righe   |   Scarica PNG e CSV esporta tutta la tabella");
+    float top = page.Y + 64;
+    if (controls) {
+        float x = page.X + 18;
+        auto btn = [&](float w, const std::wstring& label, int id, bool on = false) {
+            RectF r(x, top, w, 30);
+            addHit(r, id);
+            fillRound(g, r, on ? C(230, 242, 248) : C(16, 38, 60), kCardEdge());
+            text(g, label, btnF, on ? C(24, 48, 66) : kTitle(), r, StringAlignmentCenter, StringAlignmentCenter);
+            x += w + 8;
+        };
+        auto dateBox = [&](const wchar_t* label, long n, int id) {
+            text(g, label, body, kSub(), RectF(x, top, 28, 30));
+            x += 30;
+            int y, m, d;
+            civilFromDays(n, y, m, d);
+            RectF r(x, top, 112, 30);
+            addHit(r, id);
+            bool editing = app.yearEdit && IsWindowVisible(app.yearEdit) && app.editTarget == id;
+            fillRound(g, r, C(255, 255, 255), editing || app.hotId == id ? kGold() : kCardEdge());
+            text(g, dateText(y, m, d), bold, C(24, 48, 66), r, StringAlignmentCenter, StringAlignmentCenter);
+            x += 112 + 10;
+        };
+        dateBox(L"Dal", from, 24);
+        dateBox(L"al", to, 25);
+        btn(30, L"<", 26);
+        btn(30, L">", 27);
+        btn(64, L"Mese", 28);
+        btn(64, L"Anno", 29);
+        x += 10;
+        std::wstring stLabel = multi ? L"Stazioni: " + std::to_wstring(sts.size()) + L"  v"
+                                     : L"Stazioni: " + (sts.empty() ? std::wstring(L"-") : app.stations[sts[0]]->name) + L"  v";
+        btn(std::min(260.f, std::max(150.f, 9.f * (float)stLabel.size())), stLabel, 30, app.picker == 6);
+        if (multi) {
+            btn(190, std::wstring(L"Grandezza: ") + varShort(app.tableVar) + L"  v", 32, app.picker == 7);
+            btn(100, L"Solo una", 31);
+        }
+        top += 44;
+    }
+    if (sts.empty() || cols.empty()) { emptyMessage(g, page, L"Nessuna stazione disponibile."); return; }
+
+    // Colonne: data, poi una per grandezza o per stazione.
+    float x0 = page.X + 18, w = page.Width - 36;
+    float dateW = 128.f;
+    float colW = std::min(150.f, (w - dateW) / (float)cols.size());
+    auto colX = [&](size_t i) { return x0 + dateW + colW * (float)i; };
+    bool anyRain = false;
+    for (const auto& c : cols) if (c.var == VP) anyRain = true;
+    // Intestazioni: nome della grandezza (o della stazione) e unita'.
+    text(g, L"Data", head, kSub(), RectF(x0, top, dateW, 18));
+    for (size_t i = 0; i < cols.size(); ++i) {
+        const auto& s = *app.stations[cols[i].station];
+        std::wstring h = multi ? s.name : std::wstring(varShort(cols[i].var));
+        text(g, h, head, multi ? kTitle() : varColor(cols[i].var), RectF(colX(i), top, colW - 8, 18), StringAlignmentFar);
+        std::wstring u = varUnit(cols[i].var);
+        if (multi && !s.loaded) u = L"caricamento...";
+        else if (multi && s.loaded && !s.hasVar[cols[i].var]) u = L"non misurata";
+        text(g, u, Font(&ff, 11, FontStyleRegular, UnitPixel), kGrid(), RectF(colX(i), top + 16, colW - 8, 14), StringAlignmentFar);
+    }
+    // Statistiche su tutto il periodo, non solo sulle righe visibili.
+    struct Stat { double sum = 0, mn = NaN, mx = NaN; long nmn = 0, nmx = 0; int n = 0; };
+    std::vector<Stat> stats(cols.size());
+    for (size_t i = 0; i < cols.size(); ++i) {
+        const auto& s = *app.stations[cols[i].station];
+        auto it = std::lower_bound(s.days.begin(), s.days.end(), from, [](const Day& d, long x) { return d.n < x; });
+        for (; it != s.days.end() && it->n <= to; ++it) {
+            if (!it->has(cols[i].var)) continue;
+            double v = it->v[cols[i].var];
+            auto& t = stats[i];
+            t.sum += v; ++t.n;
+            if (!finite(t.mn) || v < t.mn) { t.mn = v; t.nmn = it->n; }
+            if (!finite(t.mx) || v > t.mx) { t.mx = v; t.nmx = it->n; }
+        }
+    }
+    const int statRows = anyRain ? 5 : 4;
+    const float pitch = 22.f;
+    float rowTop = top + 36;
+    float statTop = page.GetBottom() - 30 - statRows * pitch - 8;
+    int fit = std::max(1, (int)((statTop - 6 - rowTop) / pitch));
+    int maxScroll = std::max(0, (int)nDays - fit);
+    app.tableScroll = std::clamp(app.tableScroll, 0, maxScroll);
+    static const wchar_t* wd[] = {L"dom", L"lun", L"mar", L"mer", L"gio", L"ven", L"sab"};
+    for (int k = 0; k < fit && app.tableScroll + k < nDays; ++k) {
+        long n = from + app.tableScroll + k;
+        int y, m, d;
+        civilFromDays(n, y, m, d);
+        int wday = weekDay(n);
+        float yy = rowTop + k * pitch;
+        RectF row(x0 - 6, yy, w + 12, pitch - 2);
+        SolidBrush band(d == 1 ? C(40, 72, 100) : (wday == 0 || wday == 6) ? C(20, 46, 70) : (k % 2 ? kRow() : C(12, 30, 48)));
+        g.FillRectangle(&band, row);
+        text(g, std::wstring(wd[wday]) + L" " + dateText(y, m, d), body, (wday == 0) ? kAmber() : kTitle(), RectF(x0, yy, dateW, pitch - 2));
+        for (size_t i = 0; i < cols.size(); ++i) {
+            const auto& s = *app.stations[cols[i].station];
+            double v = tableValue(s, n, cols[i].var);
+            int dg = varDigits(cols[i].var);
+            text(g, finite(v) ? plainNum(v, dg) : std::wstring(L"-"), body, finite(v) ? varColor(cols[i].var) : kGrid(),
+                 RectF(colX(i), yy, colW - 8, pitch - 2), StringAlignmentFar);
+        }
+    }
+    // Righe di riepilogo.
+    auto shortDate = [&](long n) {
+        int y, m, d;
+        civilFromDays(n, y, m, d);
+        std::wostringstream o;
+        o << std::setfill(L'0') << std::setw(2) << d << L'/' << std::setw(2) << m;
+        if (fy != ty) o << L'/' << std::setw(2) << (y % 100);
+        return o.str();
+    };
+    const wchar_t* labels[] = {L"Media", L"Minimo", L"Massimo", L"Giorni con dato", L"Totale"};
+    for (int r = 0; r < statRows; ++r) {
+        float yy = statTop + r * pitch;
+        RectF row(x0 - 6, yy, w + 12, pitch - 2);
+        SolidBrush band(C(40, 72, 100));
+        g.FillRectangle(&band, row);
+        text(g, labels[r], bold, kTitle(), RectF(x0, yy, dateW, pitch - 2));
+        for (size_t i = 0; i < cols.size(); ++i) {
+            const auto& t = stats[i];
+            int dg = varDigits(cols[i].var);
+            std::wstring v = L"-";
+            if (r == 0 && t.n) v = plainNum(t.sum / t.n, dg + (dg ? 0 : 0));
+            if (r == 1 && t.n) v = plainNum(t.mn, dg) + L"  " + shortDate(t.nmn);
+            if (r == 2 && t.n) v = plainNum(t.mx, dg) + L"  " + shortDate(t.nmx);
+            if (r == 3) v = std::to_wstring(t.n) + L"/" + std::to_wstring(nDays);
+            if (r == 4) v = cols[i].var == VP && t.n ? plainNum(t.sum, 1) + L" mm" : L"";
+            text(g, v, r >= 1 && r <= 2 ? body : bold, r == 3 ? kSub() : varColor(cols[i].var),
+                 RectF(colX(i), yy, colW - 8, pitch - 2), StringAlignmentFar);
+        }
+    }
+    Font foot(&ff, 12, FontStyleRegular, UnitPixel);
+    std::wstring info = L"Righe " + std::to_wstring(app.tableScroll + 1) + L"-" + std::to_wstring(std::min<long>(nDays, app.tableScroll + fit))
+        + L" di " + std::to_wstring(nDays) + L"   |   righe scure: inizio mese e fine settimana   |   - = senza misura   |   fonte: OSMER FVG";
+    text(g, info, foot, kSub(), RectF(page.X + 18, page.GetBottom() - 26, page.Width - 36, 18));
+}
+
 void paintContent(Graphics& g, const RectF& page, bool controls) {
     FontFamily ff(L"Segoe UI");
     const auto& s = st();
@@ -1240,6 +1421,7 @@ void paintContent(Graphics& g, const RectF& page, bool controls) {
         return;
     }
     if (app.view == View::Overview) { paintOverview(g, page, controls); return; }
+    if (app.view == View::Table) { paintTable(g, page, controls); return; }
     if (!s.loaded) {
         cardTitle(g, page, s.name, L"Caricamento dei dati in corso...");
         return;
@@ -1364,12 +1546,12 @@ void paintScene(Graphics& g, int W, int H) {
     text(g, maxScroll ? L"MENU   rotella per scorrere" : L"MENU", quiet, C(98, 116, 129), RectF(36, 102, 270, 16), StringAlignmentNear, StringAlignmentNear);
     const wchar_t* names[] = {L"Panoramica stazioni", L"Climatologia", L"Dettaglio anno", L"Anno e fascia P5-P95", L"Pioggia cumulata",
                               L"Temperatura", L"Precipitazioni", L"SPEI-6 e SPEI-12", L"Bilancio P - PET", L"Classifiche",
-                              L"Ondate di caldo", L"Tmin e Tmax", L"Indici di pioggia"};
+                              L"Ondate di caldo e freddo", L"Tmin e Tmax", L"Indici di pioggia", L"Tabella dati"};
     const wchar_t* hints[] = {L"Tutte le stazioni a confronto", L"Medie mensili e record", L"I dodici mesi dell'anno",
                               L"Valore giornaliero e percentili", L"Cumulata giorno per giorno", L"Scarto annuale dalla media",
                               L"Millimetri sopra o sotto", L"Siccita, calibrato sulla stazione", L"Pioggia meno evaporazione",
-                              L"Anni estremi del periodo", L"I periodi piu caldi", L"Notti tropicali, gelo, giorni caldi",
-                              L"Giorni piovosi, intensita, secche"};
+                              L"Anni estremi del periodo", L"I periodi piu caldi e piu freddi", L"Notti tropicali, gelo, giorni caldi",
+                              L"Giorni piovosi, intensita, secche", L"Valori giorno per giorno, piu stazioni"};
     g.SetClip(RectF(20, menuTop - 2, side - 4, std::max(8.f, filterTop - menuTop)));
     for (int i = 0; i < ViewCount; ++i) {
         float yy = menuTop + (i - app.menuScroll) * itemH;
@@ -1485,6 +1667,40 @@ void paintScene(Graphics& g, int W, int H) {
         drawList(page.X + 16, page.Y + 16, 380, labels, 600, sel);
         // Gli id 600+ seguono l'ordine della lista: si rimappano sulle grandezze.
         for (auto& h : app.hits) if (h.id >= 600 && h.id < 600 + (int)vars.size()) h.id = 600 + vars[h.id - 600];
+    } else if (app.picker == 7) {
+        std::vector<std::wstring> labels;
+        std::vector<int> vars;
+        for (int v : {VTN, VTM, VTX, VP, VUN, VUM, VUX, VVM, VVX, VRAD, VPRES}) { labels.push_back(varName(v)); vars.push_back(v); }
+        int sel = (int)(std::find(vars.begin(), vars.end(), app.tableVar) - vars.begin());
+        drawList(page.X + 16, page.Y + 110, 320, labels, 3000, sel);
+        for (auto& h : app.hits) if (h.id >= 3000 && h.id < 3000 + (int)vars.size()) h.id = 3000 + vars[h.id - 3000];
+    } else if (app.picker == 6) {
+        // Scelta multipla delle stazioni della tabella: il clic aggiunge o toglie.
+        int n = (int)app.stations.size();
+        auto chosen = tableStations();
+        float rowH = 30.f;
+        int perCol = std::max(1, (int)((page.Height - 70) / rowH));
+        int cols = std::max(1, (n + perCol - 1) / perCol);
+        perCol = (n + cols - 1) / cols;
+        RectF box(page.X + 8, page.Y + 8, page.Width - 16, 52 + perCol * rowH);
+        fillRound(g, box, C(255, 255, 255), C(32, 54, 72));
+        addHit(box, 13);
+        text(g, L"Stazioni della tabella (" + std::to_wstring(chosen.size()) + L" di massimo " + std::to_wstring(TableMaxStations)
+             + L"): clic per aggiungere o togliere, Esc o clic fuori per chiudere", nameF, C(32, 54, 72), RectF(box.X + 16, box.Y + 10, box.Width - 32, 24));
+        float cw = (box.Width - 24) / cols;
+        for (int i = 0; i < n; ++i) {
+            const auto& si = *app.stations[i];
+            bool on = std::find(chosen.begin(), chosen.end(), i) != chosen.end();
+            RectF row(box.X + 12 + (i / perCol) * cw, box.Y + 42 + (i % perCol) * rowH, cw - 8, rowH - 3);
+            addHit(row, 4000 + i);
+            if (on) fillRound(g, row, C(232, 241, 246), C(32, 54, 72));
+            RectF tick(row.X + 6, row.Y + 6, 15, 15);
+            Pen tp(C(32, 54, 72), 1.4f);
+            g.DrawRectangle(&tp, tick);
+            if (on) { SolidBrush tb(C(32, 54, 72)); g.FillRectangle(&tb, RectF(tick.X + 3, tick.Y + 3, 9, 9)); }
+            text(g, si.name, quiet, C(32, 54, 72), RectF(row.X + 28, row.Y, row.Width * 0.66f - 20, row.Height));
+            text(g, stationPeriod(si), hintF, C(98, 116, 129), RectF(row.X + row.Width * 0.66f, row.Y, row.Width * 0.34f - 6, row.Height), StringAlignmentFar);
+        }
     } else if (app.picker == 4) {
         // Elenco delle stazioni su piu' colonne, tutte visibili insieme.
         int n = (int)app.stations.size();
@@ -1508,7 +1724,7 @@ void paintScene(Graphics& g, int W, int H) {
         }
     } else if (app.picker == 3) {
         const wchar_t* lines[] = {
-            L"1-9    viste del menu,  0 Panoramica,  T Tmin e Tmax,  P indici di pioggia,  H ondate",
+            L"1-9    viste del menu,  0 Panoramica,  T Tmin e Tmax,  P indici di pioggia,  H ondate di caldo e freddo,  D tabella",
             L"PagSu / PagGiu    stazione precedente / successiva",
             L"Frecce    spostano il periodo,   + e -    zoom del periodo",
             L"Rotella sul grafico    zoom,  trascina    sposta",
@@ -1581,6 +1797,8 @@ std::wstring sceneSignature() {
       << L'|' << (app.yearEdit && IsWindowVisible(app.yearEdit) ? app.editTarget : 0)
       << L'|' << app.status << L'|' << footerStatus() << L'|' << osmerProgress() << L'|' << stationsLoaded()
       << L'|' << app.zoomA << L'|' << app.zoomB << L'|' << app.compareYear << L'|' << app.overviewScroll << L'|' << app.overviewSort
-      << L'|' << (int)app.heatMode << L'|' << app.heatThreshold << L'|' << app.heatSel << L'|' << loadingStations();
+      << L'|' << (int)app.heatMode << L'|' << app.heatThreshold << L'|' << app.coldThreshold << L'|' << app.heatSel << L'|' << loadingStations()
+      << L'|' << app.tableFrom << L'|' << app.tableTo << L'|' << app.tableVar << L'|' << app.tableScroll << L'|' << app.tableSlugs.size();
+    for (const auto& s : app.tableSlugs) k << L',' << s;
     return k.str();
 }

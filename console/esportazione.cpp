@@ -97,17 +97,29 @@ bool saveFiles() {
     std::error_code ec;
     std::filesystem::create_directories(app.outDir, ec);
     const wchar_t* names[] = {L"panoramica", L"climatologia", L"anno", L"fascia_p5_p95", L"pioggia_cumulata", L"temperatura_scarto",
-                              L"precipitazione_scarto", L"spei_6_12", L"bilancio_scarto", L"classifiche", L"ondate_calde",
-                              L"tmin_tmax", L"indici_pioggia"};
+                              L"precipitazione_scarto", L"spei_6_12", L"bilancio_scarto", L"classifiche", L"ondate",
+                              L"tmin_tmax", L"indici_pioggia", L"tabella"};
     std::wstring stem = (app.view == View::Overview ? std::wstring(L"tutte_le_stazioni") : s.slug) + L"_" + names[(int)app.view];
     if (app.view == View::Overview || app.view == View::Year || app.view == View::Band || app.view == View::Rain) stem += L"_" + std::to_wstring(app.focusYear);
+    else if (app.view == View::Table) {
+        ensureTablePeriod();
+        auto sts = tableStations();
+        int y, m, d;
+        auto ymd = [&](long n) { civilFromDays(n, y, m, d); return std::to_wstring(y * 10000 + m * 100 + d); };
+        stem = (sts.size() > 1 ? std::to_wstring(sts.size()) + L"_stazioni_" + varShort(app.tableVar) : app.stations[sts.empty() ? 0 : sts[0]]->slug)
+            + L"_tabella_" + ymd(app.tableFrom) + L"_" + ymd(app.tableTo);
+        for (auto& c : stem) if (c == L' ' || c == L'.') c = L'_';
+    }
     else if (app.view != View::Clima && app.view != View::Heat) stem += L"_" + std::to_wstring(app.y0) + L"_" + std::to_wstring(app.y1);
     if (app.view == View::Band) {
         static const wchar_t* vs[] = {L"pioggia", L"tmin", L"tmedia", L"tmax", L"umin", L"umed", L"umax", L"vento", L"raffica", L"dir", L"radiazione", L"pressione"};
         stem += std::wstring(L"_") + vs[app.bandVar];
     }
     if (app.view == View::Heat)
-        stem += app.heatMode == HeatMode::Five ? L"_5gg" : app.heatMode == HeatMode::Ten ? L"_10gg" : L"_tmax_oltre_" + std::to_wstring(app.heatThreshold);
+        stem += app.heatMode == HeatMode::Five ? L"_5gg" : app.heatMode == HeatMode::Ten ? L"_10gg"
+              : app.heatMode == HeatMode::Streak ? L"_tmax_oltre_" + std::to_wstring(app.heatThreshold)
+              : app.heatMode == HeatMode::Cold5 ? L"_freddo_5gg" : app.heatMode == HeatMode::Cold10 ? L"_freddo_10gg"
+              : L"_tmin_sotto_" + std::to_wstring(app.coldThreshold);
     if (app.compareYear && (app.view == View::Band || app.view == View::Rain)) stem += L"_vs_" + std::to_wstring(app.compareYear);
 
     CLSID png;
@@ -224,6 +236,46 @@ bool saveFiles() {
         for (const auto& t : thermalYears())
             csv << t.year << ';' << t.expected << ';' << t.measured << ';' << t.tropical << ';' << t.frost << ';' << t.ice << ';' << t.summer << ';'
                 << t.hot30 << ';' << num(t.range) << ';' << (t.partial ? 1 : 0) << '\n';
+    } else if (app.view == View::Table) {
+        // Tutte le righe del periodo, non solo quelle a schermo.
+        auto cols = tableColumns();
+        bool multi = tableStations().size() > 1;
+        csv << "data";
+        for (const auto& c : cols) {
+            const auto& x = *app.stations[c.station];
+            csv << ';' << narrow(multi ? x.name + L" " + varShort(c.var) : std::wstring(varShort(c.var))) << " (" << narrow(varUnit(c.var)) << ')';
+        }
+        csv << '\n';
+        std::vector<double> sum(cols.size(), 0), mn(cols.size(), NaN), mx(cols.size(), NaN);
+        std::vector<int> cnt(cols.size(), 0);
+        for (long n = app.tableFrom; n <= app.tableTo; ++n) {
+            int y, m, d;
+            civilFromDays(n, y, m, d);
+            csv << date(y, m, d);
+            for (size_t i = 0; i < cols.size(); ++i) {
+                double v = tableValue(*app.stations[cols[i].station], n, cols[i].var);
+                csv << ';' << num(v, varDigits(cols[i].var));
+                if (finite(v)) {
+                    sum[i] += v; ++cnt[i];
+                    if (!finite(mn[i]) || v < mn[i]) mn[i] = v;
+                    if (!finite(mx[i]) || v > mx[i]) mx[i] = v;
+                }
+            }
+            csv << '\n';
+        }
+        const char* labels[] = {"media", "minimo", "massimo", "giorni_con_dato", "totale"};
+        for (int r = 0; r < 5; ++r) {
+            csv << labels[r];
+            for (size_t i = 0; i < cols.size(); ++i) {
+                csv << ';';
+                if (r == 0 && cnt[i]) csv << num(sum[i] / cnt[i], 2);
+                if (r == 1) csv << num(mn[i], 1);
+                if (r == 2) csv << num(mx[i], 1);
+                if (r == 3) csv << cnt[i];
+                if (r == 4 && cols[i].var == VP && cnt[i]) csv << num(sum[i], 1);
+            }
+            csv << '\n';
+        }
     } else if (app.view == View::RainIdx) {
         csv << "anno;giorni_attesi;giorni_misurati;pioggia_mm;giorni_1mm;giorni_20mm;massimo_giornaliero;periodo_secco_max;incompleto\n";
         for (const auto& r : rainYears())

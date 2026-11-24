@@ -19,9 +19,14 @@ tutte le stazioni dal sito OSMER.
   qualsiasi grandezza misurata; anno di confronto sovrapposto.
 - **Pioggia cumulata** con minimo, massimo e media degli anni completi.
 - **Temperatura, Precipitazioni, Bilancio P-PET**: scarto annuale (o stagionale o mensile).
-- **SPEI-6 e SPEI-12**, **Classifiche**, **Ondate di caldo**, **Tmin e Tmax** (notti tropicali,
+- **SPEI-6 e SPEI-12**, **Classifiche**, **Ondate di caldo e di freddo** (5 e 10 giorni piu'
+  caldi o piu' freddi, serie con Tmax oltre soglia o Tmin sotto soglia), **Tmin e Tmax** (notti tropicali,
   gelo, ghiaccio, giorni estivi e caldi, escursione), **Indici di pioggia** (giorni piovosi,
   piogge forti, massimo giornaliero, intensita', periodo secco piu' lungo).
+- **Tabella dati**: i valori giorno per giorno di un periodo qualsiasi (per esempio dal
+  01/12/2005 al 31/12/2005), per una stazione con tutte le grandezze o per piu' stazioni
+  (fino a 10) affiancate su una grandezza, con media, minimo, massimo e totale della pioggia;
+  esportabile in CSV.
 - Zoom con la rotella, trascinamento, tooltip, esportazione in PNG, PNG 2x, EMF vettoriale
   e CSV; Ctrl+C copia il grafico.
 
@@ -34,6 +39,7 @@ pioggia: al massimo 2). Dettagli in [console/LEGGIMI.md](console/LEGGIMI.md).
 |---|---|
 | ![Panoramica](docs/img/tutte_le_stazioni_panoramica_2026.png) | ![Fascia P5-P95](docs/img/udine_s_o_fascia_p5_p95_2026_tmedia.png) |
 | ![Dettaglio anno](docs/img/udine_s_o_anno_2026.png) | ![SPEI](docs/img/udine_s_o_spei_6_12_1991_2026.png) |
+| ![Tabella dati](docs/img/tabella_dati_dicembre_2005.png) | ![Ondate di freddo](docs/img/udine_s_o_ondate_freddo_5gg.png) |
 
 ## Requisiti
 
@@ -86,7 +92,7 @@ docs/                 note sull'aggiornamento dei dati e immagini
 
 ## Tasti principali
 
-`0`-`9` viste, `T` Tmin e Tmax, `P` indici di pioggia, `H` ondate di caldo,
+`0`-`9` viste, `T` Tmin e Tmax, `P` indici di pioggia, `H` ondate di caldo e freddo, `D` tabella dati,
 `PagSu`/`PagGiu` stazione precedente/successiva, `M` stagione, `C` climatologia di
 riferimento, `V` grandezza della fascia P5-P95, `G` anno successivo, `S` esporta,
 `U` aggiorna da OSMER, rotella zoom, tasto destro annulla lo zoom, `Esc` chiude.

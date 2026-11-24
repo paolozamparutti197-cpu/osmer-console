@@ -85,8 +85,13 @@ modificarla senza romperla. Leggerlo per intero prima di agire.
   dopo aver cambiato dati incrementare `app.dataVersion`.
 - Lo stato che cambia l'aspetto della finestra va aggiunto a `sceneSignature()`, altrimenti
   la scena non si ridisegna.
-- Gli id dei clic: 100+ viste, 300+ stagioni, 320+ riferimento, 400+ ondate, 450+ ordinamento
-  panoramica, 600+ grandezze, 1000+ righe panoramica, 2000+ elenco stazioni.
+- Gli id dei clic: 24-32 controlli della Tabella dati, 100+ viste, 300+ stagioni, 320+ riferimento,
+  400-407 ondate (400-402 caldo, 405-407 freddo, 403/404 soglia), 410+ righe ondate, 450+ ordinamento
+  panoramica, 600+ grandezze fascia, 1000+ righe panoramica, 2000+ elenco stazioni,
+  3000+ grandezza tabella, 4000+ stazioni della tabella (scelta multipla, il pannello resta aperto).
+- `ultima_vista.txt` (sessione): riga 1 numeri della vista, riga 2 stazione, riga 3 periodo della
+  tabella (numeri di giorno), grandezza e soglia del freddo, riga 4 stazioni della tabella separate da `|`.
+  Le righe 3-4 sono facoltative: i file vecchi devono continuare a caricarsi.
 - `aggiorna_osmer_unificato.py` scopre le stazioni dagli script `scarica_osmer_*_tutti_gli_anni.py`
   (costanti `STATION_NAME`, `STATION_VALUE`, `STATION_SLUG`). Per aggiungere una stazione si
   aggiunge uno script copiando uno esistente e cambiando le tre costanti.

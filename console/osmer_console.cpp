@@ -128,7 +128,8 @@ static void openHeatWave() {
     int a = dayIndex(w.m0, w.d0), b = w.y1 == w.y0 ? dayIndex(w.m1, w.d1) : 365;
     app.zoomA = std::max(0, a - 20) / 365.0;
     app.zoomB = std::min(365, b + 20) / 365.0;
-    app.status = L"Ondata nell'anno " + std::to_wstring(w.y0) + L": tasto destro sul grafico per vedere l'anno intero.";
+    app.status = std::wstring(coldMode(app.heatMode) ? L"Ondata di freddo" : L"Ondata di caldo") + L" nell'anno "
+        + std::to_wstring(w.y0) + L": tasto destro sul grafico per vedere l'anno intero.";
 }
 
 static void changeStation(int index) {
@@ -150,6 +151,56 @@ void onCommand(int id) {
     if (id == 12) { app.picker = app.picker == 3 ? 0 : 3; return; }
     if (id == 10) { app.picker = app.picker == 4 ? 0 : 4; return; }
     if (id == 19) { app.picker = app.picker == 5 ? 0 : 5; return; }
+    // Tabella dati.
+    if (id == 24 || id == 25) { app.picker = 0; beginYearEdit(id); return; }
+    if (id == 30) { app.picker = app.picker == 6 ? 0 : 6; return; }
+    if (id == 32) { app.picker = app.picker == 7 ? 0 : 7; return; }
+    if (id >= 4000 && id < 4000 + (int)app.stations.size()) {
+        // Il pannello resta aperto: si possono scegliere piu' stazioni di seguito.
+        const auto& slug = app.stations[id - 4000]->slug;
+        if (app.tableSlugs.empty() && haveStation()) app.tableSlugs.push_back(st().slug);
+        auto it = std::find(app.tableSlugs.begin(), app.tableSlugs.end(), slug);
+        if (it != app.tableSlugs.end()) {
+            if (app.tableSlugs.size() > 1) app.tableSlugs.erase(it);
+            else app.status = L"Almeno una stazione deve restare nella tabella.";
+        } else if ((int)app.tableSlugs.size() >= TableMaxStations) {
+            app.status = L"Al massimo " + std::to_wstring(TableMaxStations) + L" stazioni insieme nella tabella.";
+        } else app.tableSlugs.push_back(slug);
+        for (int i : tableStations()) if (!app.stations[i]->loaded) startBackgroundLoad({i});
+        saveSession();
+        return;
+    }
+    if (id >= 3000 && id < 3000 + NVAR) { app.tableVar = id - 3000; app.picker = 0; saveSession(); return; }
+    if (id >= 26 && id <= 29) {
+        ensureTablePeriod();
+        int fy, fm, fd, ty, tm, td;
+        civilFromDays(app.tableFrom, fy, fm, fd);
+        civilFromDays(app.tableTo, ty, tm, td);
+        bool wholeMonth = fd == 1 && fy == ty && fm == tm && td == daysIn(ty, tm);
+        bool wholeYear = fd == 1 && fm == 1 && fy == ty && tm == 12 && td == 31;
+        if (id == 28) { app.tableFrom = dayNumber(fy, fm, 1); app.tableTo = dayNumber(fy, fm, daysIn(fy, fm)); }
+        else if (id == 29) { app.tableFrom = dayNumber(fy, 1, 1); app.tableTo = dayNumber(fy, 12, 31); }
+        else {
+            int dir = id == 26 ? -1 : 1;
+            if (wholeYear) { app.tableFrom = dayNumber(fy + dir, 1, 1); app.tableTo = dayNumber(fy + dir, 12, 31); }
+            else if (wholeMonth) {
+                int y = fy, m = fm + dir;
+                if (m < 1) { m = 12; --y; }
+                if (m > 12) { m = 1; ++y; }
+                app.tableFrom = dayNumber(y, m, 1);
+                app.tableTo = dayNumber(y, m, daysIn(y, m));
+            } else {
+                long len = app.tableTo - app.tableFrom + 1;
+                app.tableFrom += dir * len;
+                app.tableTo += dir * len;
+            }
+        }
+        app.tableScroll = 0;
+        app.picker = 0;
+        saveSession();
+        return;
+    }
+    if (id == 31) { app.tableSlugs.clear(); app.picker = 0; saveSession(); return; }
     if (id >= 300 && id <= 316) {
         int i = id - 300;
         if (i == 0) app.season = Season::Year;
@@ -196,8 +247,14 @@ void onCommand(int id) {
     else if (id == 17) stepCompare(+1);
     else if (id == 18) app.compareYear = 0;
     else if (id >= 400 && id <= 402) { app.heatMode = (HeatMode)(id - 400); app.heatSel = 0; }
-    else if (id == 403) { app.heatThreshold = std::max(20, app.heatThreshold - 1); app.heatSel = 0; }
-    else if (id == 404) { app.heatThreshold = std::min(42, app.heatThreshold + 1); app.heatSel = 0; }
+    else if (id >= 405 && id <= 407) { app.heatMode = (HeatMode)(id - 405 + 3); app.heatSel = 0; }
+    else if (id == 403 || id == 404) {
+        // La soglia regolata e' quella della classifica a schermo (Tmax o Tmin).
+        int d = id == 403 ? -1 : 1;
+        if (app.heatMode == HeatMode::ColdStreak) app.coldThreshold = std::clamp(app.coldThreshold + d, -25, 5);
+        else app.heatThreshold = std::clamp(app.heatThreshold + d, 20, 42);
+        app.heatSel = 0;
+    }
     else if (id >= 410 && id <= 419) app.heatSel = id - 410;
     else if (id == 420) openHeatWave();
     else if (id == 1) { app.y0--; clampPeriod(); }
@@ -252,11 +309,20 @@ void closeYearEdit(bool apply) {
     if (!app.yearEdit || !IsWindowVisible(app.yearEdit) || app.editBusy) return;
     app.editBusy = true;
     if (apply) {
-        wchar_t buf[16] = {};
-        GetWindowTextW(app.yearEdit, buf, 16);
+        wchar_t buf[24] = {};
+        GetWindowTextW(app.yearEdit, buf, 24);
         bool digits = buf[0] != 0;
         for (wchar_t* p = buf; *p && digits; ++p) digits = *p >= L'0' && *p <= L'9';
-        if (digits) applyTypedYear(app.editTarget, _wtoi(buf));
+        if (app.editTarget == 24 || app.editTarget == 25) {
+            long n = 0;
+            if (parseDate(buf, n)) {
+                (app.editTarget == 24 ? app.tableFrom : app.tableTo) = n;
+                if (app.tableTo < app.tableFrom) std::swap(app.tableFrom, app.tableTo);
+                app.tableScroll = 0;
+                saveSession();
+                app.status = L"Periodo della tabella aggiornato.";
+            } else app.status = L"Data non valida: scrivi giorno/mese/anno, per esempio 01/12/2005.";
+        } else if (digits) applyTypedYear(app.editTarget, _wtoi(buf));
     }
     ShowWindow(app.yearEdit, SW_HIDE);
     if (GetFocus() == app.yearEdit) SetFocus(app.hwnd);
@@ -286,12 +352,22 @@ void beginYearEdit(int target) {
         SetWindowPos(app.yearEdit, nullptr, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOZORDER);
     }
     app.editTarget = target;
+    // Le date della tabella hanno le barre: niente filtro "solo cifre".
+    bool date = target == 24 || target == 25;
+    LONG_PTR style = GetWindowLongPtrW(app.yearEdit, GWL_STYLE);
+    SetWindowLongPtrW(app.yearEdit, GWL_STYLE, date ? (style & ~(LONG_PTR)ES_NUMBER) : (style | ES_NUMBER));
     std::wstring text = std::to_wstring(yearForTarget(target));
+    if (date) {
+        ensureTablePeriod();
+        int y, m, d;
+        civilFromDays(target == 24 ? app.tableFrom : app.tableTo, y, m, d);
+        text = dateText(y, m, d);
+    }
     SetWindowTextW(app.yearEdit, text.c_str());
     ShowWindow(app.yearEdit, SW_SHOW);
     SetFocus(app.yearEdit);
     SendMessageW(app.yearEdit, EM_SETSEL, 0, -1);
-    app.status = L"Scrivi l'anno e premi Invio. Esc annulla.";
+    app.status = date ? L"Scrivi la data (gg/mm/aaaa) e premi Invio. Esc annulla." : L"Scrivi l'anno e premi Invio. Esc annulla.";
     requestRedraw();
 }
 
@@ -491,7 +567,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
         }
         int hot = 0;
-        for (const auto& h : app.hits) if ((h.id >= 20 && h.id <= 23) && PtInRect(&h.rc, p)) hot = h.id;
+        for (const auto& h : app.hits) if ((((h.id >= 20 && h.id <= 23) || h.id == 24 || h.id == 25)) && PtInRect(&h.rc, p)) hot = h.id;
         int a = -1, b = -1, month = -1;
         if (app.picker == 0) {
             int k = probeAt(p);
@@ -532,6 +608,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (p.x < 340) {
             app.menuScroll += delta > 0 ? -1 : 1;
             requestRedraw();
+        } else if (app.picker == 0 && app.view == View::Table) {
+            app.tableScroll += (delta > 0 ? -5 : 5) * std::max(1, std::abs(delta) / WHEEL_DELTA);
+            requestRedraw();
         } else if (app.picker == 0 && app.view == View::Overview) {
             app.overviewScroll += delta > 0 ? -3 : 3;
             requestRedraw();
@@ -557,7 +636,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (LOWORD(lp) == HTCLIENT) {
             POINT p; GetCursorPos(&p); ScreenToClient(hwnd, &p); p = toLogical(p);
             if (app.dragging) { SetCursor(LoadCursor(nullptr, IDC_SIZEWE)); return TRUE; }
-            for (const auto& h : app.hits) if (h.id >= 20 && h.id <= 23 && PtInRect(&h.rc, p)) {
+            for (const auto& h : app.hits) if (((h.id >= 20 && h.id <= 23) || h.id == 24 || h.id == 25) && PtInRect(&h.rc, p)) {
                 SetCursor(LoadCursor(nullptr, IDC_IBEAM));
                 return TRUE;
             }
@@ -585,6 +664,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp >= '1' && wp <= '9') app.view = (View)(wp - '0');
         else if (wp == '0') app.view = View::Overview;
         else if (wp == 'T') app.view = View::Thermal;
+        else if (wp == 'D') app.view = View::Table;
         else if (wp == 'P') app.view = View::RainIdx;
         else if (wp == 'H') app.view = View::Heat;
         else if (wp == 'S') saveFiles();

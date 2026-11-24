@@ -90,9 +90,12 @@ struct Station {
 
 struct Sample { int year = 0, month = 0; double value = 0; int n = 0; };
 enum class View {
-    Overview, Clima, Year, Band, Rain, Temp, Prec, Spei, Balance, Rank, Heat, Thermal, RainIdx
+    Overview, Clima, Year, Band, Rain, Temp, Prec, Spei, Balance, Rank, Heat, Thermal, RainIdx, Table
 };
-constexpr int ViewCount = 13;
+constexpr int ViewCount = 14;
+
+// Colonna della Tabella dati: una grandezza di una stazione.
+struct TableColumn { int station = 0; int var = VTM; };
 enum class Season { Year, Month, Winter, Spring, Summer, Autumn };
 enum class RefMode { Station, Visible, Clima1991 };
 struct Hit { RECT rc{}; int id = 0; };
@@ -115,7 +118,11 @@ struct HeatWave {
     double meanT = 0, meanTx = 0, maxTx = 0, meanTn = 0, minTn = 0;
     size_t first = 0;
 };
-enum class HeatMode { Five, Ten, Streak };
+// Caldo: 5 e 10 giorni piu' caldi, serie con Tmax oltre soglia.
+// Freddo: 5 e 10 giorni piu' freddi, serie con Tmin sotto soglia.
+enum class HeatMode { Five, Ten, Streak, Cold5, Cold10, ColdStreak };
+inline bool coldMode(HeatMode m) { return m == HeatMode::Cold5 || m == HeatMode::Cold10 || m == HeatMode::ColdStreak; }
+inline bool streakMode(HeatMode m) { return m == HeatMode::Streak || m == HeatMode::ColdStreak; }
 
 // Indici annuali da Tmin e Tmax.
 struct ThermalYear {
@@ -189,7 +196,14 @@ struct App {
     int compareYear = 0;
     HeatMode heatMode = HeatMode::Five;
     int heatThreshold = 33;
+    int coldThreshold = -5;     // soglia della Tmin per le serie fredde
     int heatSel = 0;
+    // Tabella dati: periodo (numeri di giorno, 0 = da impostare), stazioni
+    // scelte (vuoto = stazione corrente), grandezza se le stazioni sono piu' di una.
+    long tableFrom = 0, tableTo = 0;
+    int tableVar = VTM;
+    std::vector<std::wstring> tableSlugs;
+    int tableScroll = 0;
     struct Probe { RECT plot; std::vector<std::wstring> tip; std::vector<int> year; };
     std::vector<Probe> probes;
     float scale = 1.f;
@@ -265,6 +279,16 @@ std::vector<OverviewRow> overviewRows();
 bool haveTminTmax();
 void zoomRange(size_t n, size_t& i0, size_t& i1);
 void resetZoom();
+// Tabella dati.
+void civilFromDays(long n, int& y, int& m, int& d);
+int weekDay(long n);                                  // 0 = domenica
+bool parseDate(const std::wstring& text, long& n);    // gg/mm/aaaa
+void ensureTablePeriod();
+std::vector<int> tableStations();                     // indici delle stazioni in tabella
+std::vector<TableColumn> tableColumns();
+double tableValue(const Station& s, long n, int var); // NaN se manca
+const wchar_t* varShort(int k);
+constexpr int TableMaxStations = 10;
 
 // ---------------------------------------------------------------- grafica.cpp
 

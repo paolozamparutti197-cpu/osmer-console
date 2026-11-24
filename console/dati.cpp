@@ -91,7 +91,7 @@ const wchar_t* varUnit(int k) {
     return k >= 0 && k < NVAR ? u[k] : L"";
 }
 int varDigits(int k) {
-    return (k == VRAD || k == VUN || k == VUM || k == VUX || k == VDIR) ? 0 : 1;
+    return (k == VRAD || k == VUN || k == VUM || k == VUX || k == VDIR || k == VVM || k == VVX) ? 0 : 1;
 }
 std::wstring dateText(int y, int m, int d) {
     std::wostringstream out;
@@ -572,6 +572,10 @@ void saveSession() {
         << app.compareYear << ' ' << (int)app.heatMode << ' ' << app.heatThreshold << ' ' << app.bandVar << ' '
         << app.overviewSort << '\n';
     out << narrow(st().slug) << '\n';
+    out << app.tableFrom << ' ' << app.tableTo << ' ' << app.tableVar << ' ' << app.coldThreshold << '\n';
+    std::string slugs;
+    for (const auto& s : app.tableSlugs) { if (!slugs.empty()) slugs += '|'; slugs += narrow(s); }
+    out << slugs << '\n';
 }
 bool loadSession() {
     std::ifstream in(std::filesystem::path(joinPath(exeDir(), L"ultima_vista.txt")));
@@ -591,12 +595,122 @@ bool loadSession() {
     app.refMode = (RefMode)ref;
     app.focusYear = fy;
     app.compareYear = compare;
-    app.heatMode = (HeatMode)std::clamp(heatMode, 0, 2);
+    app.heatMode = (HeatMode)std::clamp(heatMode, 0, 5);
     app.heatThreshold = std::clamp(threshold, 20, 42);
     app.bandVar = std::clamp(bandVar, 0, NVAR - 1);
     if (app.bandVar == VDIR) app.bandVar = VTM;
     app.overviewSort = std::clamp(sort, 0, 3);
+    // Tabella dati (righe aggiunte a novembre 2026, assenti nei file precedenti).
+    long from = 0, to = 0; int var = VTM;
+    if (in >> from >> to >> var) {
+        app.tableFrom = from; app.tableTo = to;
+        app.tableVar = (var >= 0 && var < NVAR && var != VDIR) ? var : VTM;
+        std::string line;
+        std::getline(in, line);
+        int cold = 0;
+        if (std::istringstream(line) >> cold) app.coldThreshold = std::clamp(cold, -25, 5);
+        if (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t a = 0;
+            while (a < line.size()) {
+                size_t b = line.find('|', a);
+                if (b == std::string::npos) b = line.size();
+                if (b > a) app.tableSlugs.push_back(widen(line.substr(a, b - a)));
+                a = b + 1;
+            }
+        }
+    }
     return true;
+}
+
+// ------------------------------------------------------------ tabella dati
+
+void civilFromDays(long n, int& y, int& m, int& d) {
+    // Inverso di dayNumber (algoritmo di H. Hinnant, senza lo spostamento al 1970).
+    long era = (n >= 0 ? n : n - 146096) / 146097;
+    long doe = n - era * 146097;
+    long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    long mp = (5 * doy + 2) / 153;
+    d = (int)(doy - (153 * mp + 2) / 5 + 1);
+    m = (int)(mp < 10 ? mp + 3 : mp - 9);
+    y = (int)(yoe + era * 400 + (m <= 2 ? 1 : 0));
+}
+
+int weekDay(long n) {
+    static const long ref = dayNumber(1970, 1, 1);   // giovedi'
+    long k = ((n - ref) % 7 + 7) % 7;
+    return (int)((k + 4) % 7);
+}
+
+bool parseDate(const std::wstring& text, long& n) {
+    int part[3] = {0, 0, 0}, k = 0, digits = 0;
+    for (wchar_t c : text) {
+        if (c >= L'0' && c <= L'9') { if (k > 2) return false; part[k] = part[k] * 10 + (c - L'0'); ++digits; }
+        else if (c == L'/' || c == L'-' || c == L'.' || c == L' ') { if (digits) { ++k; digits = 0; } }
+        else return false;
+    }
+    if (digits) ++k;
+    if (k != 3) return false;
+    int d = part[0], m = part[1], y = part[2];
+    if (y < 100) y += 2000;
+    if (m < 1 || m > 12 || y < 1800 || y > 2200 || d < 1 || d > daysIn(y, m)) return false;
+    n = dayNumber(y, m, d);
+    return true;
+}
+
+// Periodo iniziale: il mese dell'ultimo dato della stazione.
+void ensureTablePeriod() {
+    if (app.tableFrom && app.tableTo) {
+        if (app.tableTo < app.tableFrom) std::swap(app.tableFrom, app.tableTo);
+        return;
+    }
+    const auto& s = st();
+    int y = s.lastY, m = s.lastM;
+    if (!y) {
+        SYSTEMTIME t;
+        GetLocalTime(&t);
+        y = t.wYear; m = t.wMonth;
+    }
+    app.tableFrom = dayNumber(y, m, 1);
+    app.tableTo = dayNumber(y, m, daysIn(y, m));
+}
+
+std::vector<int> tableStations() {
+    std::vector<int> out;
+    for (const auto& slug : app.tableSlugs)
+        for (int i = 0; i < (int)app.stations.size(); ++i)
+            if (app.stations[i]->slug == slug) { out.push_back(i); break; }
+    if (out.empty() && haveStation()) out.push_back(app.current);
+    return out;
+}
+
+const wchar_t* varShort(int k) {
+    static const wchar_t* n[] = {L"Pioggia", L"Tmin", L"Tmedia", L"Tmax", L"Umid. min", L"Umid. media", L"Umid. max",
+                                 L"Vento medio", L"Raffica", L"Dir. raffica", L"Radiazione", L"Pressione"};
+    return k >= 0 && k < NVAR ? n[k] : L"";
+}
+
+// Una stazione: tutte le grandezze principali che misura. Piu' stazioni:
+// una colonna per stazione con la grandezza scelta.
+std::vector<TableColumn> tableColumns() {
+    std::vector<TableColumn> cols;
+    auto sts = tableStations();
+    if (sts.size() == 1) {
+        const auto& s = *app.stations[sts[0]];
+        for (int v : {VTN, VTM, VTX, VP, VUM, VVM, VVX, VRAD, VPRES})
+            if (!s.loaded || s.hasVar[v]) cols.push_back(TableColumn{sts[0], v});
+        if (cols.empty()) cols.push_back(TableColumn{sts[0], VTM});
+    } else {
+        for (int i : sts) cols.push_back(TableColumn{i, app.tableVar});
+    }
+    return cols;
+}
+
+double tableValue(const Station& s, long n, int var) {
+    auto it = std::lower_bound(s.days.begin(), s.days.end(), n, [](const Day& d, long x) { return d.n < x; });
+    if (it == s.days.end() || it->n != n || !it->has(var)) return NaN;
+    return it->v[var];
 }
 void cycleSeason() {
     if (app.season == Season::Year) app.season = Season::Winter;
@@ -1041,13 +1155,36 @@ static HeatWave makeWave(size_t first, size_t count) {
 const std::vector<HeatWave>& heatWaves() {
     static unsigned long version = ~0ul;
     static HeatMode mode = HeatMode::Five;
-    static int threshold = -1000;
+    static int threshold = -1000, coldThr = -1000;
     static std::vector<HeatWave> out;
-    if (version == app.dataVersion && mode == app.heatMode && threshold == app.heatThreshold) return out;
-    version = app.dataVersion; mode = app.heatMode; threshold = app.heatThreshold;
+    if (version == app.dataVersion && mode == app.heatMode && threshold == app.heatThreshold && coldThr == app.coldThreshold) return out;
+    version = app.dataVersion; mode = app.heatMode; threshold = app.heatThreshold; coldThr = app.coldThreshold;
     out.clear();
     const auto& days = st().days;
     const size_t top = 10;
+    const bool cold = coldMode(app.heatMode);
+    if (app.heatMode == HeatMode::ColdStreak) {
+        // Giorni consecutivi con Tmin sotto la soglia: un giorno senza Tmin interrompe la serie.
+        std::vector<HeatWave> all;
+        size_t start = 0, count = 0;
+        long lastDay = 0;
+        auto close = [&]() { if (count) all.push_back(makeWave(start, count)); count = 0; };
+        for (size_t i = 0; i < days.size(); ++i) {
+            if (!days[i].has(VTN) || !(days[i].v[VTN] < app.coldThreshold)) { close(); continue; }
+            if (count && days[i].n - lastDay != 1) close();
+            if (!count) start = i;
+            ++count;
+            lastDay = days[i].n;
+        }
+        close();
+        std::stable_sort(all.begin(), all.end(), [&](const HeatWave& a, const HeatWave& b) {
+            if (a.days != b.days) return a.days > b.days;
+            return a.minTn < b.minTn;
+        });
+        if (all.size() > top) all.resize(top);
+        out = std::move(all);
+        return out;
+    }
     if (app.heatMode == HeatMode::Streak) {
         std::vector<HeatWave> all;
         size_t start = 0, count = 0;
@@ -1071,7 +1208,7 @@ const std::vector<HeatWave>& heatWaves() {
         out = std::move(all);
         return out;
     }
-    const size_t window = app.heatMode == HeatMode::Five ? 5 : 10;
+    const size_t window = (app.heatMode == HeatMode::Five || app.heatMode == HeatMode::Cold5) ? 5 : 10;
     struct Cand { size_t first; double mean; long d0, d1; };
     std::vector<Cand> cands;
     for (size_t i = 0; i + window <= days.size(); ++i) {
@@ -1085,8 +1222,9 @@ const std::vector<HeatWave>& heatWaves() {
         if (!complete) continue;
         cands.push_back(Cand{i, sum / (double)window, days[i].n, days[i + window - 1].n});
     }
-    std::stable_sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
-        if (a.mean != b.mean) return a.mean > b.mean;
+    // Caldo: dalla Tmedia piu' alta. Freddo: dalla piu' bassa.
+    std::stable_sort(cands.begin(), cands.end(), [cold](const Cand& a, const Cand& b) {
+        if (a.mean != b.mean) return cold ? a.mean < b.mean : a.mean > b.mean;
         return a.d0 < b.d0;
     });
     std::vector<Cand> chosen;

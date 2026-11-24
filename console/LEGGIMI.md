@@ -38,7 +38,14 @@ Servono almeno 10 anni di mesi completi.
   radiazione, pressione), record di Tmax, Tmin e pioggia giornaliera, climogramma.
 2 Dettaglio anno, 3 Anno e fascia P5-P95 (qualsiasi grandezza, tasto V), 4 Pioggia cumulata
   (con media degli anni completi), 5 Temperatura, 6 Precipitazioni, 7 SPEI, 8 Bilancio P-PET,
-  9 Classifiche, H Ondate di caldo, T Tmin e Tmax (6 indici), P Indici di pioggia (6 indici).
+  9 Classifiche, H Ondate di caldo e di freddo (5 e 10 giorni piu caldi o piu freddi, serie con
+  Tmax oltre soglia o con Tmin sotto soglia), T Tmin e Tmax (6 indici), P Indici di pioggia (6 indici).
+
+D Tabella dati: valori giorno per giorno di un periodo a scelta (campi "Dal" e "al", gg/mm/aaaa;
+  pulsanti < > Mese Anno). Con una stazione mostra tutte le grandezze che misura; con piu' stazioni
+  (fino a 10, pulsante "Stazioni") una colonna per stazione della grandezza scelta. In fondo media,
+  minimo e massimo con la data, giorni con dato e totale della pioggia. "Scarica PNG e CSV" esporta
+  tutte le righe del periodo.
 
 PagSu / PagGiu cambiano stazione; "STAZIONE" apre l'elenco completo.
 
