@@ -1,0 +1,25 @@
+# Dati scaricati da OSMER: ognuno li scarica dal sito
+dati_stazioni/*
+!dati_stazioni/.gitkeep
+
+# Esportazioni e file di lavoro della console
+grafici_console/
+console/*.exe
+console/*.obj
+console/*.res
+console/build_log.txt
+console/ultima_vista.txt
+console/osmer_aggiornamento.log
+console/ultimo_aggiornamento_osmer.txt
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Residui degli aggiornamenti completi
+.riallineamento_*/
+_backup_riallineamento/
+*.log
