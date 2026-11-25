@@ -47,6 +47,28 @@ D Tabella dati: valori giorno per giorno di un periodo a scelta (campi "Dal" e "
   minimo e massimo con la data, giorni con dato e totale della pioggia. "Scarica PNG e CSV" esporta
   tutte le righe del periodo.
 
+R Mappa: le stazioni sulla carta del FVG (confini ISTAT 2026, CC BY 3.0), colorate per scarto
+  di temperatura o pioggia in % (anno o stagione scelti), ultimo dato o quota. Mouse su una stazione:
+  dettagli; clic: la apre. Il confine e' in confini_fvg.h, generato da strumenti/genera_confini_fvg.py.
+
+Q Controllo qualita': elenco dei dati sospetti di una stazione o di tutte. Controlli:
+  - incoerenze (Tmin piu' alta della Tmax, Tmedia fuori da Tmin-Tmax);
+  - fuori dal clima della stazione (oltre 4,5 deviazioni dalla media di quel periodo dell'anno);
+  - diverso dalle stazioni vicine (entro 35 km e 350 m di quota), solo se eccezionale per quella
+    stazione e se nello stesso giorno non si staccano anche altre stazioni (allora e' il tempo:
+    fohn, bora, inversioni);
+  - salto isolato di almeno 10 C rispetto sia al giorno prima sia al giorno dopo;
+  - valore bloccato (stessa temperatura per 5 giorni, stessa pioggia di almeno 1 mm per 4);
+  - temperature e piogge impossibili, gia' ignorate in lettura.
+  I controlli segnalano e non correggono. Clic su una riga: Tabella dati attorno a quel giorno.
+  La casella "Escludi" toglie il dato da tutti i calcoli (e lo rimette con un altro clic); l'elenco
+  delle esclusioni e' in console\dati_esclusi.csv.
+
+W Vento: rosa dei venti della raffica massima del giorno (16 settori, colori per forza della
+  raffica), vento medio, raffica media, direzione prevalente, giorni con raffica di almeno 60 km/h
+  e quanti da NE (bora: NNE, NE, ENE, E), le 5 raffiche piu' forti (una per episodio) e i giorni
+  ventosi anno per anno. Segue il periodo e la stagione scelti nel pannello a sinistra.
+
 PagSu / PagGiu cambiano stazione; "STAZIONE" apre l'elenco completo.
 
 ## Aggiorna tutte le stazioni da OSMER

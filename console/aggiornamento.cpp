@@ -62,6 +62,40 @@ void stopBackgroundLoad() {
     if (loader.worker.joinable()) loader.worker.join();
 }
 
+// Pulsante RILEGGI CSV (tasto L): si cercano di nuovo i CSV in dati_stazioni e
+// si rileggono tutti. Se non se ne trova nessuno, si mostra perche'.
+void forceReloadStations() {
+    if (osmerRunning()) { app.status = L"Aggiornamento OSMER in corso: rileggo i CSV quando ha finito."; requestRedraw(); return; }
+    stopBackgroundLoad();
+    {
+        std::lock_guard<std::mutex> lock(loader.mu);
+        loader.queue.clear();
+        loader.pending = 0;
+    }
+    std::wstring keep = app.stations.empty() || !haveStation() ? L"udine_s_o" : st().slug;
+    std::wstring dir = joinPath(app.root, L"dati_stazioni");
+    app.stations = discoverStations(dir);
+    ++app.qcVersion;
+    ++app.dataVersion;
+    app.current = 0;
+    for (int i = 0; i < (int)app.stations.size(); ++i) if (app.stations[i]->slug == keep) app.current = i;
+    if (app.stations.empty()) {
+        app.status = L"Nessun CSV trovato in " + dir + L"   (" + lastScanReport() + L")";
+        std::wstring msg = L"Non ho trovato nessun file osmer_*_giornalieri_tutti_gli_anni.csv in\n" + dir
+            + L"\n\nCartella dei dati usata dalla console: " + app.root + L"\n\n" + lastScanReport();
+        MessageBoxW(app.hwnd, msg.c_str(), L"Rileggi CSV", MB_OK | MB_ICONWARNING);
+        requestRedraw();
+        return;
+    }
+    loadStation(st());
+    selectStation(app.current, true);
+    std::vector<int> others;
+    for (int i = 0; i < (int)app.stations.size(); ++i) if (i != app.current) others.push_back(i);
+    startBackgroundLoad(others);
+    app.status = L"Riletti i CSV: " + std::to_wstring(app.stations.size()) + L" stazioni (" + lastScanReport() + L").";
+    requestRedraw();
+}
+
 bool loadingStations() { return loader.pending > 0; }
 
 int stationsLoaded() {
@@ -77,6 +111,7 @@ void onStationLoaded(LPARAM lp) {
         if (app.stations[i]->file != fresh->file) continue;
         fresh->slug = app.stations[i]->slug;
         app.stations[i] = std::move(fresh);
+        ++app.qcVersion;
         if (i == app.current) {
             ++app.dataVersion;
             selectStation(i, true);
@@ -238,6 +273,12 @@ void updateAllFromOsmer() {
     // Si' = aggiorna e scarica anche lo storico completo delle stazioni che non
     // hanno ancora un CSV (prima installazione o stazioni nuove). No = solo aggiornamento.
     bool init = false;
+    // Prima di proporre il download completo si ricontrolla il disco: se i CSV
+    // ci sono (all'avvio non erano stati letti) si caricano e si fa solo l'aggiornamento.
+    if (app.stations.empty() && addNewStations() > 0) {
+        app.status = L"Trovati " + std::to_wstring(app.stations.size()) + L" CSV in dati_stazioni: caricamento in corso.";
+        requestRedraw();
+    }
     if (app.stations.empty()) {
         std::wstring ask = L"La cartella dati_stazioni e' vuota.\n\nScaricare da OSMER lo storico completo di tutte le stazioni fino al "
             + dateText(t.wYear, t.wMonth, t.wDay) + L"?\n\nE' un download lungo (anche piu' di un'ora, con pause tra le richieste "

@@ -201,6 +201,37 @@ void onCommand(int id) {
         return;
     }
     if (id == 31) { app.tableSlugs.clear(); app.picker = 0; saveSession(); return; }
+    // Mappa e controllo qualita'.
+    if (id >= 37 && id <= 40) { app.mapMode = id - 37; app.picker = 0; saveSession(); return; }
+    if (id == 33 || id == 34) { app.qcAll = id == 34; app.qcScroll = 0; app.picker = 0; saveSession(); return; }
+    if (id == 35) { app.picker = app.picker == 8 ? 0 : 8; return; }
+    if (id == 36) { app.qcSevere = !app.qcSevere; app.qcScroll = 0; app.picker = 0; saveSession(); return; }
+    if (id >= 7000 && id <= 7000 + QcKindCount) { app.qcKind = id - 7001; app.qcScroll = 0; app.picker = 0; saveSession(); return; }
+    if (id >= 5000 && id < 7000) {
+        auto list = qcFiltered();
+        int k = id >= 6000 ? id - 6000 : id - 5000;
+        if (k < 0 || k >= (int)list.size()) return;
+        const QcItem q = *list[k];
+        const auto& s = *app.stations[q.station];
+        int y, m, d;
+        civilFromDays(q.n, y, m, d);
+        if (id >= 6000) {
+            // Esclude (o rimette) il dato e rilegge la stazione: tutte le viste ne tengono conto.
+            bool now = toggleExclusion(s.slug, q.n, q.var);
+            startBackgroundLoad({q.station});
+            app.status = std::wstring(now ? L"Escluso dai calcoli: " : L"Rimesso nei calcoli: ") + s.name + L", " + dateText(y, m, d)
+                + L", " + varName(q.var) + L". Elenco in console\\dati_esclusi.csv";
+        } else {
+            app.tableSlugs = {s.slug};
+            app.tableFrom = q.n - 7;
+            app.tableTo = q.n + 7;
+            app.tableScroll = 0;
+            app.view = View::Table;
+            app.status = L"Tabella di " + s.name + L" attorno al " + dateText(y, m, d) + L": il giorno segnalato e' l'ottava riga.";
+        }
+        saveSession();
+        return;
+    }
     if (id >= 300 && id <= 316) {
         int i = id - 300;
         if (i == 0) app.season = Season::Year;
@@ -269,6 +300,7 @@ void onCommand(int id) {
         app.focusYear = std::clamp(app.focusYear + (id == 8 ? -1 : 1), lo, hi);
     }
     else if (id == 11) updateAllFromOsmer();
+    else if (id == 15) { forceReloadStations(); return; }
     saveSession();
 }
 
@@ -608,6 +640,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (p.x < 340) {
             app.menuScroll += delta > 0 ? -1 : 1;
             requestRedraw();
+        } else if (app.picker == 0 && app.view == View::Quality) {
+            app.qcScroll += (delta > 0 ? -5 : 5) * std::max(1, std::abs(delta) / WHEEL_DELTA);
+            requestRedraw();
         } else if (app.picker == 0 && app.view == View::Table) {
             app.tableScroll += (delta > 0 ? -5 : 5) * std::max(1, std::abs(delta) / WHEEL_DELTA);
             requestRedraw();
@@ -665,10 +700,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == '0') app.view = View::Overview;
         else if (wp == 'T') app.view = View::Thermal;
         else if (wp == 'D') app.view = View::Table;
+        else if (wp == 'R') app.view = View::Map;
+        else if (wp == 'Q') app.view = View::Quality;
+        else if (wp == 'W') app.view = View::Wind;
         else if (wp == 'P') app.view = View::RainIdx;
         else if (wp == 'H') app.view = View::Heat;
         else if (wp == 'S') saveFiles();
         else if (wp == 'U') updateAllFromOsmer();
+        else if (wp == 'L') forceReloadStations();
         else if (wp == 'M') { cycleSeason(); resetZoom(); }
         else if (wp == 'V') {
             do { app.bandVar = (app.bandVar + 1) % NVAR; } while (app.bandVar == VDIR || (!st().hasVar[app.bandVar] && app.bandVar != VTM));
@@ -749,7 +788,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
     }
     // La stazione scelta si legge subito; le altre in background.
     if (haveStation()) loadStation(st());
-    else app.status = L"Nessun dato in dati_stazioni: premi AGGIORNA TUTTE DA OSMER per scaricare lo storico (prima installazione).";
+    else app.status = L"Nessun CSV trovato in dati_stazioni (" + lastScanReport() + L"). Premi RILEGGI CSV (tasto L) per riprovare.";
     if (haveStation()) {
         int y0 = app.y0, y1 = app.y1, fy = app.focusYear;
         selectStation(app.current, false);

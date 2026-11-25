@@ -109,34 +109,89 @@ static bool transientPath(const std::filesystem::path& p) {
     return false;
 }
 
+// Un errore su una singola cartella (file bloccato dall'antivirus, memoria scarsa,
+// cartella in uso da un altro programma) salta solo quella cartella: prima un
+// errore qualsiasi fermava tutta la ricerca e la console vedeva zero stazioni.
+namespace {
+struct ScanReport { int dirs = 0, files = 0, errors = 0; std::wstring firstError; } scanReport;
+
+void noteScanError(const std::filesystem::path& where, const std::error_code& ec) {
+    ++scanReport.errors;
+    if (scanReport.firstError.empty())
+        scanReport.firstError = where.wstring() + L": " + widen(ec.message()) + L" (codice " + std::to_wstring(ec.value()) + L")";
+}
+}
+
+std::wstring lastScanReport() {
+    std::wstring t = L"cartelle lette " + std::to_wstring(scanReport.dirs) + L", file visti " + std::to_wstring(scanReport.files);
+    if (scanReport.errors) t += L", errori " + std::to_wstring(scanReport.errors) + L". Primo errore: " + scanReport.firstError;
+    return t;
+}
+
+static void scanStations(const std::filesystem::path& dataDir, std::vector<std::unique_ptr<Station>>& out) {
+    const std::wstring suffix = L"_giornalieri_tutti_gli_anni.csv";
+    std::vector<std::filesystem::path> todo{dataDir};
+    while (!todo.empty()) {
+        auto dir = todo.back();
+        todo.pop_back();
+        std::error_code ec;
+        std::filesystem::directory_iterator it(dir, std::filesystem::directory_options::skip_permission_denied, ec), end;
+        if (ec) { noteScanError(dir, ec); continue; }
+        ++scanReport.dirs;
+        for (; it != end; it.increment(ec)) {
+            if (ec) { noteScanError(dir, ec); break; }
+            std::error_code ec2;
+            if (it->is_directory(ec2)) {
+                if (!it->is_symlink(ec2) && !transientPath(it->path())) todo.push_back(it->path());
+                continue;
+            }
+            if (!it->is_regular_file(ec2)) { if (ec2) noteScanError(it->path(), ec2); continue; }
+            ++scanReport.files;
+            auto name = it->path().filename().wstring();
+            if (name.size() <= suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
+            if (name.rfind(L"osmer_", 0) != 0 || name.find(L"anni_test") != std::wstring::npos) continue;
+            if (transientPath(it->path())) continue;
+            auto s = std::make_unique<Station>();
+            s->file = it->path().wstring();
+            s->slug = name.substr(6, name.size() - 6 - suffix.size());
+            s->name = s->slug;
+            // Il nome vero sta nel CSV: si legge solo la seconda riga, cosi' l'elenco e' subito pronto.
+            std::ifstream in{it->path()};
+            std::string header, row;
+            if (std::getline(in, header) && std::getline(in, row)) {
+                std::vector<std::string> c;
+                std::string cur;
+                for (char ch : row) { if (ch == ';') { c.push_back(cur); cur.clear(); } else if (ch != '\r') cur.push_back(ch); }
+                c.push_back(cur);
+                if (c.size() > 15 && !c[15].empty()) s->name = widen(c[15]);
+            }
+            out.push_back(std::move(s));
+        }
+    }
+}
+
 std::vector<std::unique_ptr<Station>> discoverStations(const std::wstring& dataDir) {
     std::vector<std::unique_ptr<Station>> out;
-    std::error_code ec;
-    const std::wstring suffix = L"_giornalieri_tutti_gli_anni.csv";
-    for (auto it = std::filesystem::recursive_directory_iterator(dataDir, std::filesystem::directory_options::skip_permission_denied, ec);
-         it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
-        if (ec) break;
-        if (!it->is_regular_file(ec)) continue;
-        auto name = it->path().filename().wstring();
-        if (name.size() <= suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) continue;
-        if (name.rfind(L"osmer_", 0) != 0 || name.find(L"anni_test") != std::wstring::npos) continue;
-        if (transientPath(it->path())) continue;
-        auto s = std::make_unique<Station>();
-        s->file = it->path().wstring();
-        s->slug = name.substr(6, name.size() - 6 - suffix.size());
-        s->name = s->slug;
-        // Il nome vero sta nel CSV: si legge solo la seconda riga, cosi' l'elenco e' subito pronto.
-        std::ifstream in{it->path()};
-        std::string header, row;
-        if (std::getline(in, header) && std::getline(in, row)) {
-            std::vector<std::string> c;
-            std::string cur;
-            for (char ch : row) { if (ch == ';') { c.push_back(cur); cur.clear(); } else if (ch != '\r') cur.push_back(ch); }
-            c.push_back(cur);
-            if (c.size() > 15 && !c[15].empty()) s->name = widen(c[15]);
+    // Se la cartella non e' vuota ma non si trova nessun CSV, si riprova: un
+    // disco appena risvegliato o un blocco momentaneo non devono sembrare
+    // "archivio vuoto".
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        out.clear();
+        scanReport = ScanReport{};
+        scanStations(dataDir, out);
+        if (!out.empty()) break;
+        std::error_code ec;
+        if (!std::filesystem::is_directory(dataDir, ec)) {
+            if (scanReport.firstError.empty()) scanReport.firstError = dataDir + L": cartella non trovata";
+            ++scanReport.errors;
+            break;
         }
-        out.push_back(std::move(s));
+        if (std::filesystem::is_empty(dataDir, ec)) break;
+        Sleep(750);
     }
+    // Lo stesso CSV non deve comparire due volte.
+    std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return _wcsicmp(a->file.c_str(), b->file.c_str()) < 0; });
+    out.erase(std::unique(out.begin(), out.end(), [](const auto& a, const auto& b) { return _wcsicmp(a->file.c_str(), b->file.c_str()) == 0; }), out.end());
     std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
         return _wcsicmp(a->name.c_str(), b->name.c_str()) < 0;
     });
@@ -327,6 +382,15 @@ static void computeMonths(Station& s) {
 
 bool loadStation(Station& s) {
     s.error.clear();
+    {
+        // Lo slug serve alle esclusioni: si ricava dal nome del file.
+        auto name = std::filesystem::path(s.file).filename().wstring();
+        const std::wstring suffix = L"_giornalieri_tutti_gli_anni.csv";
+        if (s.slug.empty() && name.size() > 6 + suffix.size() && name.rfind(L"osmer_", 0) == 0)
+            s.slug = name.substr(6, name.size() - 6 - suffix.size());
+    }
+    std::vector<RawFlag> flags;
+    const bool anyExcluded = exclusionCount() > 0;
     std::string stamp = fileStamp(s.file);
     std::ifstream in{std::filesystem::path(s.file), std::ios::binary};
     if (!in) { s.error = L"File non leggibile"; s.loaded = true; return false; }
@@ -357,15 +421,24 @@ bool loadStation(Station& s) {
         d.y = (int)fy; d.m = (int)fm; d.d = (int)fd;
         if (d.m < 1 || d.m > 12 || d.d < 1 || d.d > daysIn(d.y, d.m)) continue;
         bool any = false;
+        d.n = dayNumber(d.y, d.m, d.d);
         for (int v = 0; v < NVAR; ++v) {
             float x = parseCell(cells[2 + v], ends[2 + v]);
-            if (std::isfinite(x) && !plausible(v, x)) x = NAN;
+            if (std::isfinite(x) && !plausible(v, x)) {
+                // Si segnalano solo temperature e pioggia: nelle altre colonne alcuni anni hanno
+                // dati spostati (umidita' 1991-1994, pressione di alcune stazioni) e l'elenco sarebbe solo rumore.
+                if (v == VTN || v == VTM || v == VTX || v == VP) flags.push_back(RawFlag{d.n, v, x, false});
+                x = NAN;
+            }
+            if (std::isfinite(x) && anyExcluded && isExcluded(s.slug, d.n, v)) {
+                flags.push_back(RawFlag{d.n, v, x, true});
+                x = NAN;
+            }
             d.v[v] = x;
             any = any || std::isfinite(x);
         }
         if (nameField.empty() && k > 16) { nameField.assign(cells[15], ends[15]); valueField.assign(cells[16], ends[16]); }
         if (!any) continue;
-        d.n = dayNumber(d.y, d.m, d.d);
         days.push_back(d);
     }
     std::stable_sort(days.begin(), days.end(), [](const Day& x, const Day& y) { return x.n < y.n; });
@@ -377,6 +450,7 @@ bool loadStation(Station& s) {
         else unique.push_back(d);
     }
     s.days.swap(unique);
+    s.flags.swap(flags);
     if (!nameField.empty()) s.name = widen(nameField);
     if (!valueField.empty()) {
         std::vector<std::string> parts;
@@ -576,6 +650,7 @@ void saveSession() {
     std::string slugs;
     for (const auto& s : app.tableSlugs) { if (!slugs.empty()) slugs += '|'; slugs += narrow(s); }
     out << slugs << '\n';
+    out << app.mapMode << ' ' << app.qcAll << ' ' << app.qcSevere << ' ' << app.qcKind << '\n';
 }
 bool loadSession() {
     std::ifstream in(std::filesystem::path(joinPath(exeDir(), L"ultima_vista.txt")));
@@ -618,6 +693,14 @@ bool loadSession() {
                 if (b > a) app.tableSlugs.push_back(widen(line.substr(a, b - a)));
                 a = b + 1;
             }
+        }
+        // Mappa e controllo qualita' (riga facoltativa).
+        int mapMode = 0, all = 0, severe = 0, kind = -1;
+        if (in >> mapMode >> all >> severe >> kind) {
+            app.mapMode = std::clamp(mapMode, 0, 3);
+            app.qcAll = all != 0;
+            app.qcSevere = severe != 0;
+            app.qcKind = std::clamp(kind, -1, QcKindCount - 1);
         }
     }
     return true;
@@ -1441,4 +1524,81 @@ std::vector<OverviewRow> overviewRows() {
             return lastN(*app.stations[a.index]) > lastN(*app.stations[b.index]);
         });
     return rows;
+}
+
+
+// ------------------------------------------------------------ vento
+
+const wchar_t* sectorName(int k) {
+    static const wchar_t* n[] = {L"N", L"NNE", L"NE", L"ENE", L"E", L"ESE", L"SE", L"SSE",
+                                 L"S", L"SSO", L"SO", L"OSO", L"O", L"ONO", L"NO", L"NNO"};
+    return n[((k % 16) + 16) % 16];
+}
+
+// Bora: raffica dai quadranti nord-orientali (NNE, NE, ENE, E).
+bool boraDirection(double dir) { return finite(dir) && dir >= 22.5 && dir < 101.25; }
+
+const WindStats& windStats() {
+    static unsigned long version = ~0ul;
+    static int y0 = 0, y1 = 0, month = 0;
+    static Season season = Season::Year;
+    static WindStats out;
+    if (version == app.dataVersion && y0 == app.y0 && y1 == app.y1 && month == app.month && season == app.season) return out;
+    version = app.dataVersion; y0 = app.y0; y1 = app.y1; month = app.month; season = app.season;
+    out = WindStats{};
+    int first, last;
+    dailyYears(first, last);
+    int a = std::max(first, app.y0), b = std::min(last, app.y1);
+    if (b < a) return out;
+    for (int y = a; y <= b; ++y) {
+        WindYear w;
+        w.year = y;
+        for (int m = 1; m <= 12; ++m) if (monthInSeason(m)) w.expected += daysIn(y, m);
+        out.years.push_back(w);
+    }
+    double count[WindSectors][WindClasses] = {};
+    double sumWind = 0, sumGust = 0;
+    int nWind = 0;
+    std::vector<WindGust> all;
+    for (const auto& d : st().days) {
+        if (d.y < a || d.y > b || !monthInSeason(d.m)) continue;
+        if (d.has(VVM)) { sumWind += d.v[VVM]; ++nWind; }
+        if (!d.has(VVX)) continue;
+        double g = d.v[VVX];
+        double dir = d.has(VDIR) ? d.v[VDIR] : NaN;
+        sumGust += g;
+        ++out.nGust;
+        auto& w = out.years[d.y - a];
+        ++w.measured;
+        if (!finite(w.maxGust) || g > w.maxGust) w.maxGust = g;
+        if (g >= WindStrong) { ++w.windy; if (boraDirection(dir)) ++w.bora; }
+        all.push_back(WindGust{d.n, g, dir});
+        if (finite(dir)) {
+            int sec = (int)std::floor(std::fmod(dir + 11.25, 360.0) / 22.5) % WindSectors;
+            int cls = g < 30 ? 0 : g < 60 ? 1 : g < 90 ? 2 : 3;
+            count[sec][cls] += 1;
+            ++out.nDir;
+        }
+    }
+    if (out.nDir) {
+        double best = -1;
+        for (int k = 0; k < WindSectors; ++k) {
+            double tot = 0;
+            for (int c = 0; c < WindClasses; ++c) { out.pct[k][c] = 100.0 * count[k][c] / out.nDir; tot += out.pct[k][c]; }
+            if (tot > best) { best = tot; out.prevalent = k; }
+        }
+    }
+    if (nWind) out.meanWind = sumWind / nWind;
+    if (out.nGust) out.meanGust = sumGust / out.nGust;
+    for (auto& w : out.years) w.partial = w.measured < 0.9 * w.expected;
+    // Le raffiche piu' forti, una per episodio: giorni a meno di 3 giorni da una gia' scelta si saltano.
+    std::stable_sort(all.begin(), all.end(), [](const WindGust& x, const WindGust& y) { return x.gust > y.gust; });
+    for (const auto& g : all) {
+        bool close = false;
+        for (const auto& t : out.top) if (std::abs(t.n - g.n) <= 2) { close = true; break; }
+        if (close) continue;
+        out.top.push_back(g);
+        if (out.top.size() >= 5) break;
+    }
+    return out;
 }

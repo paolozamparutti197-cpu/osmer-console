@@ -93,14 +93,21 @@ static std::string date(int y, int m, int d) {
 
 bool saveFiles() {
     const auto& s = st();
-    if (app.view != View::Overview && !s.loaded) { app.status = L"Dati della stazione non ancora caricati."; return false; }
+    if (app.view != View::Overview && app.view != View::Map && app.view != View::Quality && !s.loaded) { app.status = L"Dati della stazione non ancora caricati."; return false; }
     std::error_code ec;
     std::filesystem::create_directories(app.outDir, ec);
     const wchar_t* names[] = {L"panoramica", L"climatologia", L"anno", L"fascia_p5_p95", L"pioggia_cumulata", L"temperatura_scarto",
                               L"precipitazione_scarto", L"spei_6_12", L"bilancio_scarto", L"classifiche", L"ondate",
-                              L"tmin_tmax", L"indici_pioggia", L"tabella"};
+                              L"tmin_tmax", L"indici_pioggia", L"tabella", L"mappa", L"controllo_qualita", L"vento"};
     std::wstring stem = (app.view == View::Overview ? std::wstring(L"tutte_le_stazioni") : s.slug) + L"_" + names[(int)app.view];
     if (app.view == View::Overview || app.view == View::Year || app.view == View::Band || app.view == View::Rain) stem += L"_" + std::to_wstring(app.focusYear);
+    else if (app.view == View::Map) {
+        static const wchar_t* ms[] = {L"scarto_temperatura", L"pioggia_percento", L"ultimo_dato", L"quota"};
+        stem = std::wstring(L"tutte_le_stazioni_mappa_") + ms[app.mapMode] + (app.mapMode <= 1 ? L"_" + std::to_wstring(app.focusYear) : L"");
+    }
+    else if (app.view == View::Quality) {
+        stem = (app.qcAll ? std::wstring(L"tutte_le_stazioni") : s.slug) + L"_controllo_qualita";
+    }
     else if (app.view == View::Table) {
         ensureTablePeriod();
         auto sts = tableStations();
@@ -236,6 +243,42 @@ bool saveFiles() {
         for (const auto& t : thermalYears())
             csv << t.year << ';' << t.expected << ';' << t.measured << ';' << t.tropical << ';' << t.frost << ';' << t.ice << ';' << t.summer << ';'
                 << t.hot30 << ';' << num(t.range) << ';' << (t.partial ? 1 : 0) << '\n';
+    } else if (app.view == View::Wind) {
+        const auto& w = windStats();
+        csv << "settore;direzione_gradi;sotto_30_kmh_perc;30_60_kmh_perc;60_90_kmh_perc;oltre_90_kmh_perc;totale_perc\n";
+        for (int k = 0; k < WindSectors; ++k) {
+            double tot = 0;
+            csv << narrow(sectorName(k)) << ';' << num(k * 22.5, 1);
+            for (int c = 0; c < WindClasses; ++c) { csv << ';' << num(w.pct[k][c], 2); tot += w.pct[k][c]; }
+            csv << ';' << num(tot, 2) << '\n';
+        }
+        csv << "\nanno;giorni_attesi;giorni_misurati;giorni_raffica_60;di_cui_da_NE_bora;raffica_massima_kmh;incompleto\n";
+        for (const auto& y : w.years)
+            csv << y.year << ';' << y.expected << ';' << y.measured << ';' << y.windy << ';' << y.bora << ';' << num(y.maxGust, 0) << ';' << (y.partial ? 1 : 0) << '\n';
+        csv << "\nraffiche_piu_forti;data;raffica_kmh;direzione_gradi\n";
+        int rank = 0;
+        for (const auto& t : w.top) {
+            int y, m, d;
+            civilFromDays(t.n, y, m, d);
+            csv << ++rank << ';' << date(y, m, d) << ';' << num(t.gust, 0) << ';' << num(t.dir, 0) << '\n';
+        }
+    } else if (app.view == View::Map) {
+        auto val = mapValues();
+        csv << "stazione;latitudine;longitudine;quota_m;valore\n";
+        for (size_t i = 0; i < app.stations.size(); ++i) {
+            const auto& x = *app.stations[i];
+            csv << narrow(x.name) << ';' << num(x.lat, 6) << ';' << num(x.lon, 6) << ';' << num(x.alt, 0) << ';' << num(val[i], 2) << '\n';
+        }
+    } else if (app.view == View::Quality) {
+        csv << "data;stazione;grandezza;valore;tipo;gravita;escluso;dettaglio\n";
+        for (const auto* q : qcFiltered()) {
+            int y, m, d;
+            civilFromDays(q->n, y, m, d);
+            csv << date(y, m, d) << ';' << narrow(app.stations[q->station]->name) << ';' << narrow(varShort(q->var)) << ';'
+                << num(q->value, 1) << ';' << narrow(qcKindName(q->kind)) << ';'
+                << (q->excluded ? "escluso" : q->severity >= 2 ? "molto sospetto" : "sospetto") << ';' << (q->excluded ? 1 : 0) << ';'
+                << narrow(q->detail) << '\n';
+        }
     } else if (app.view == View::Table) {
         // Tutte le righe del periodo, non solo quelle a schermo.
         auto cols = tableColumns();

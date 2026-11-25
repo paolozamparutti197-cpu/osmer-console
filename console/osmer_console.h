@@ -71,6 +71,9 @@ struct Month {
     double spei3 = NaN, spei6 = NaN, spei12 = NaN;
 };
 
+// Valore tolto in lettura: fuori dai limiti fisici o escluso dall'utente.
+struct RawFlag { long n = 0; int var = 0; float value = 0; bool user = false; };
+
 struct Station {
     std::wstring name;          // dal campo stazione_nome
     std::wstring slug;          // dal nome del file
@@ -86,13 +89,37 @@ struct Station {
     int lastY = 0, lastM = 0, lastD = 0;   // ultimo giorno con misure
     bool hasVar[NVAR] = {};
     long expectedDays = 0, measuredT = 0, measuredP = 0;
+    std::vector<RawFlag> flags;
+};
+
+// Controllo qualita': una riga per dato sospetto (stazione, giorno, grandezza).
+enum QcKind { QcInconsistent = 0, QcClimate, QcNeighbors, QcSpike, QcStuck, QcDiscarded, QcExcluded, QcKindCount };
+struct QcItem {
+    int station = 0; long n = 0; int var = 0; double value = 0;
+    int kind = 0, severity = 1;            // 1 sospetto, 2 molto sospetto, 0 escluso
+    std::wstring detail;
+    bool excluded = false;
 };
 
 struct Sample { int year = 0, month = 0; double value = 0; int n = 0; };
 enum class View {
-    Overview, Clima, Year, Band, Rain, Temp, Prec, Spei, Balance, Rank, Heat, Thermal, RainIdx, Table
+    Overview, Clima, Year, Band, Rain, Temp, Prec, Spei, Balance, Rank, Heat, Thermal, RainIdx, Table, Map, Quality, Wind
 };
-constexpr int ViewCount = 14;
+constexpr int ViewCount = 17;
+
+// Vento: rosa dei venti della raffica massima giornaliera e giorni ventosi.
+constexpr int WindSectors = 16, WindClasses = 4;      // classi di raffica: <30, 30-60, 60-90, >=90 km/h
+constexpr double WindStrong = 60;                      // giorno ventoso: raffica di almeno 60 km/h
+struct WindYear { int year = 0, measured = 0, expected = 0, windy = 0, bora = 0; double maxGust = NaN; bool partial = false; };
+struct WindGust { long n = 0; double gust = 0, dir = NaN; };
+struct WindStats {
+    double pct[WindSectors][WindClasses] = {};         // % dei giorni con direzione
+    int nDir = 0, nGust = 0;
+    double meanWind = NaN, meanGust = NaN;
+    int prevalent = -1;                                // settore piu' frequente
+    std::vector<WindYear> years;
+    std::vector<WindGust> top;                         // raffiche piu' forti
+};
 
 // Colonna della Tabella dati: una grandezza di una stazione.
 struct TableColumn { int station = 0; int var = VTM; };
@@ -204,6 +231,13 @@ struct App {
     int tableVar = VTM;
     std::vector<std::wstring> tableSlugs;
     int tableScroll = 0;
+    // Mappa: 0 scarto di temperatura, 1 pioggia in %, 2 ultimo dato, 3 quota.
+    int mapMode = 0;
+    // Controllo qualita': tutte le stazioni o solo la corrente, tipo (-1 = tutti),
+    // solo i dati molto sospetti, scorrimento. qcVersion cambia con i dati.
+    bool qcAll = false, qcSevere = false;
+    int qcKind = -1, qcScroll = 0;
+    unsigned long qcVersion = 1;
     struct Probe { RECT plot; std::vector<std::wstring> tip; std::vector<int> year; };
     std::vector<Probe> probes;
     float scale = 1.f;
@@ -228,6 +262,8 @@ std::wstring joinPath(const std::wstring& a, const std::wstring& b);
 std::wstring widen(const std::string& text);
 std::string narrow(const std::wstring& text);
 std::vector<std::unique_ptr<Station>> discoverStations(const std::wstring& dataDir);
+std::wstring lastScanReport();   // esito dell'ultima ricerca dei CSV (cartelle, file, primo errore)
+void forceReloadStations();      // pulsante RILEGGI CSV: ricerca e rilettura di tutti i CSV
 bool loadStation(Station& s);        // legge il CSV e calcola mesi, PET e SPEI
 std::string fileStamp(const std::wstring& path);
 int dayIndex(int m, int d);
@@ -279,6 +315,9 @@ std::vector<OverviewRow> overviewRows();
 bool haveTminTmax();
 void zoomRange(size_t n, size_t& i0, size_t& i1);
 void resetZoom();
+const WindStats& windStats();
+const wchar_t* sectorName(int k);                      // N, NNE, NE, ...
+bool boraDirection(double dir);                        // da NE: tra 22,5 e 101,25 gradi
 // Tabella dati.
 void civilFromDays(long n, int& y, int& m, int& d);
 int weekDay(long n);                                  // 0 = domenica
@@ -289,6 +328,17 @@ std::vector<TableColumn> tableColumns();
 double tableValue(const Station& s, long n, int var); // NaN se manca
 const wchar_t* varShort(int k);
 constexpr int TableMaxStations = 10;
+
+// ---------------------------------------------------------------- qualita.cpp
+
+void loadExclusions();
+bool isExcluded(const std::wstring& slug, long n, int var);
+bool toggleExclusion(const std::wstring& slug, long n, int var);   // true = ora escluso
+int exclusionCount();
+const wchar_t* qcKindName(int k);
+const std::vector<QcItem>& qcItems();
+std::vector<double> mapValues();                     // grafica.cpp: valore di ogni stazione sulla mappa
+std::vector<const QcItem*> qcFiltered();
 
 // ---------------------------------------------------------------- grafica.cpp
 

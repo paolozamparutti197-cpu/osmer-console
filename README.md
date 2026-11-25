@@ -27,6 +27,12 @@ tutte le stazioni dal sito OSMER.
   01/12/2005 al 31/12/2005), per una stazione con tutte le grandezze o per piu' stazioni
   (fino a 10) affiancate su una grandezza, con media, minimo, massimo e totale della pioggia;
   esportabile in CSV.
+- **Mappa**: le stazioni sulla carta del FVG, colorate per scarto di temperatura o pioggia,
+  ultimo dato o quota; clic su una stazione per aprirla.
+- **Controllo qualita'**: dati sospetti di una stazione o di tutte (incoerenze, valori fuori
+  dal clima della stazione, differenze eccezionali dalle stazioni vicine, salti isolati, valori
+  bloccati). I controlli segnalano e non correggono; un dato si puo' escludere dai calcoli.
+- **Vento**: rosa dei venti della raffica massima, giorni ventosi, giorni di bora, raffiche piu' forti.
 - Zoom con la rotella, trascinamento, tooltip, esportazione in PNG, PNG 2x, EMF vettoriale
   e CSV; Ctrl+C copia il grafico.
 
@@ -95,7 +101,7 @@ docs/                 note sull'aggiornamento dei dati e immagini
 `0`-`9` viste, `T` Tmin e Tmax, `P` indici di pioggia, `H` ondate di caldo e freddo, `D` tabella dati,
 `PagSu`/`PagGiu` stazione precedente/successiva, `M` stagione, `C` climatologia di
 riferimento, `V` grandezza della fascia P5-P95, `G` anno successivo, `S` esporta,
-`U` aggiorna da OSMER, rotella zoom, tasto destro annulla lo zoom, `Esc` chiude.
+`R` mappa, `Q` controllo qualita', `W` vento, `U` aggiorna da OSMER, `L` rilegge i CSV, rotella zoom, tasto destro annulla lo zoom, `Esc` chiude.
 
 ## Dati e licenze
 
@@ -103,6 +109,7 @@ riferimento, `V` grandezza della fascia P5-P95, `G` anno successivo, `S` esporta
   Questo repository non contiene dati: ognuno li scarica dal sito ufficiale.
   Prima di ripubblicare i dati o i grafici verificare le condizioni d'uso di ARPA FVG
   e citare la fonte. Usare il download con moderazione.
+- **Confini della mappa**: ISTAT 2026, licenza CC BY 3.0.
 - **Codice**: licenza MIT, vedi [LICENSE](LICENSE). Progetto indipendente, non affiliato
   a OSMER o ARPA FVG.
 

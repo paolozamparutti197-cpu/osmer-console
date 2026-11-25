@@ -11,6 +11,7 @@ console/build_log.txt
 console/ultima_vista.txt
 console/osmer_aggiornamento.log
 console/ultimo_aggiornamento_osmer.txt
+console/dati_esclusi.csv
 
 # Python
 __pycache__/
